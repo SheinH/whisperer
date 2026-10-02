@@ -14,7 +14,8 @@
 
 class StreamingAudioUploader : public QThread {
 Q_OBJECT
-    constexpr static const char *const m_endpoint = "https://api.mistral.ai/v1/audio/transcriptions"; // 60 seconds
+    constexpr static const char *const m_endpoint =
+            "https://whisperer.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe?api-version=2025-10-15";
 
 public:
     explicit StreamingAudioUploader(AudioThread *audioThread, QObject *parent = nullptr);

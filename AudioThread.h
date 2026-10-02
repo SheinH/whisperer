@@ -29,11 +29,11 @@ extern "C" {
 namespace EncPreset {
     inline constexpr int        kChannels     = 1;
     inline constexpr int        kSampleRate   = 16'000;
-    inline constexpr int        kBitRate      = 1024*32;
     inline constexpr AVSampleFormat kSampleFmt = AV_SAMPLE_FMT_S16;
-    inline constexpr std::string_view kContainer = "ogg";
-//    inline constexpr AVCodecID  kCodecId      = AV_CODEC_ID_AAC;
-    inline constexpr std::string_view codecName = "libopus";
+    inline constexpr std::string_view kContainer = "wav";
+    inline constexpr std::string_view codecName = "pcm_s16le";
+    // PCM encoders have no fixed frame size, so feed them 20 ms at a time.
+    inline constexpr int        kPcmFrameSamples = kSampleRate / 50;
 } // namespace EncPreset
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -95,6 +95,7 @@ private:
     int         handleWrite(const uint8_t *buf,int size);
     bool        resampleAndStore(const AVFrame *decoded);
     bool        encodeAndWrite();
+    int         frameSamples() const;
 
     // constant members -----------------------------------------------------
 

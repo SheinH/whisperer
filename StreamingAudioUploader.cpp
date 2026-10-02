@@ -3,17 +3,18 @@
 #include <QApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QSettings>
 
 namespace {
     QMutex g_curlInitMutex;
     bool g_curlInitialized = false;
-    // Looks up the Mistral API key: the MISTRAL_API_KEY environment variable wins,
-    // otherwise fall back to the "mistralApiKey" entry in the app's QSettings.
+    // Looks up the Azure Speech key: the AZURE_SPEECH_KEY environment variable wins,
+    // otherwise fall back to the "azureSpeechKey" entry in the app's QSettings.
     QByteArray loadApiKey() {
-        QByteArray key = qgetenv("MISTRAL_API_KEY").trimmed();
+        QByteArray key = qgetenv("AZURE_SPEECH_KEY").trimmed();
         if (key.isEmpty())
-            key = QSettings().value("mistralApiKey").toString().trimmed().toUtf8();
+            key = QSettings().value("azureSpeechKey").toString().trimmed().toUtf8();
         return key;
     }
 
@@ -61,22 +62,15 @@ StreamingAudioUploader::StreamingAudioUploader(AudioThread *audioThread, QObject
     setupRequest();
 }
 
+// Azure fast transcription returns {"combinedPhrases":[{"text":"..."}], "phrases":[...], ...};
+// the combined phrases hold the full transcript.
 QByteArray extractTextField(const QByteArray &jsonData)
 {
-    // Parse the bytes into a JSON document
-    QJsonDocument doc = QJsonDocument::fromJson(jsonData);
-
-    // Verify it is a valid JSON object
-    if (doc.isObject()) {
-        // 1. Get the root object
-        // 2. Look up "text" (returns QJsonValue::Undefined if missing)
-        // 3. Convert to QString (handles JSON un-escaping like \n or \")
-        // 4. Convert back to UTF-8
-        return doc.object().value("text").toString().toUtf8();
-    }
-
-    // Return empty if parsing failed or key doesn't exist
-    return QByteArray();
+    const QJsonArray combined = QJsonDocument::fromJson(jsonData).object().value("combinedPhrases").toArray();
+    QStringList texts;
+    for (const QJsonValue &phrase : combined)
+        texts << phrase.toObject().value("text").toString();
+    return texts.join(' ').toUtf8();
 }
 
 void StreamingAudioUploader::run() {
@@ -167,13 +161,11 @@ void StreamingAudioUploader::setupRequest() {
         curl_mime_name(part, name);
         curl_mime_data(part, value, CURL_ZERO_TERMINATED);
     };
-    addTextPart("model", "voxtral-mini-latest");
-    addTextPart("language", "en");
-    // addTextPart("response_format", "text");
+    addTextPart("definition", R"({"enhancedMode":{"enabled":true,"model":"MAI-Transcribe-2"}})");
     curl_mimepart *part = curl_mime_addpart(m_mime);
-    curl_mime_name(part, "file");
-    curl_mime_filename(part, "audio.ogg");
-    curl_mime_type(part, "audio/ogg");
+    curl_mime_name(part, "audio");
+    curl_mime_filename(part, "audio.wav");
+    curl_mime_type(part, "audio/wav");
     curl_mime_data_cb(part,
             /* length */ -1,
                       &StreamingAudioUploader::fileReadCallback,
@@ -196,8 +188,8 @@ void StreamingAudioUploader::setOpts() {
     curl_easy_setopt(m_curl, CURLOPT_TRANSFER_ENCODING, 1L);
     const QByteArray apiKey = loadApiKey();
     if (apiKey.isEmpty())
-        qCritical() << "No Mistral API key found. Set MISTRAL_API_KEY or the mistralApiKey setting.";
-    m_headers = curl_slist_append(m_headers, ("x-api-key: " + apiKey).constData());
+        qCritical() << "No Azure Speech key found. Set AZURE_SPEECH_KEY or the azureSpeechKey setting.";
+    m_headers = curl_slist_append(m_headers, ("Ocp-Apim-Subscription-Key: " + apiKey).constData());
     curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, m_headers);
     curl_easy_setopt(m_curl, CURLOPT_FAILONERROR, 1L);
 }

@@ -77,14 +77,13 @@ void AudioThread::run() {
     while (!m_abort) {
         if (m_startRequested.exchange(false) && m_state == State::Idle) {
             if (setupOutput()) {
-                AVDictionary *options = nullptr;
-                av_dict_set_int(&options, "page_duration", 20000, 0);
                 QMutexLocker lock(&m_bufMutex);
                 m_buffers.emplaceBack();
                 m_bufCond.notify_all();
                 lock.unlock();
-                avformat_write_header(m_outFmtCtx, &options);
-                av_dict_free(&options);
+                // The output is streamed and not seekable, so the WAV header's size
+                // fields are left as 0xFFFFFFFF (the usual "unknown length" marker).
+                avformat_write_header(m_outFmtCtx, nullptr);
                 m_state = State::Recording;
                 emit recordingStarted();
             }
@@ -115,7 +114,7 @@ void AudioThread::run() {
             while (avcodec_receive_frame(m_inDecCtx, m_decFrame) == 0) {
                 if (!resampleAndStore(m_decFrame))
                         emit errorHappened(QStringLiteral(u"Audio FIFO write failed"));
-                while (av_audio_fifo_size(m_fifo) >= m_outEncCtx->frame_size) {
+                while (av_audio_fifo_size(m_fifo) >= frameSamples()) {
                     encodeAndWrite();
                 }
                 av_frame_unref(m_decFrame);
@@ -141,7 +140,8 @@ bool AudioThread::setupOutput() {
                                        EncPreset::kContainer.data(), nullptr) < 0)
         return false;
     m_outFmtCtx->pb = m_avioCtx;
-    m_outFmtCtx->flags |= AVFMT_FLAG_FLUSH_PACKETS  | AVFMT_FLAG_NOBUFFER;
+    // BITEXACT keeps the muxer from adding a LIST/INFO chunk to the WAV header.
+    m_outFmtCtx->flags |= AVFMT_FLAG_FLUSH_PACKETS  | AVFMT_FLAG_NOBUFFER | AVFMT_FLAG_BITEXACT;
 
 
 //    const AVCodec *enc = avcodec_find_encoder_by_name(EncPreset::codecName.data());
@@ -157,24 +157,8 @@ bool AudioThread::setupOutput() {
         if (m_outFmtCtx->oformat->flags & AVFMT_GLOBALHEADER)
             m_outEncCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-// 1) Tell libavcodec to use Q-scale (so it picks global_quality)
-//        m_outEncCtx->flags |= AV_CODEC_FLAG_QSCALE;
-
-// 2) Set the *best* VBR quantizer (0 = highest internal quality)
-//        m_outEncCtx->global_quality = FF_QP2LAMBDA * 10;
-m_outEncCtx->bit_rate = EncPreset::kBitRate;
-
-// 3) Build your option dict: VBR mode + speed/quality knob
-        AVDictionary *encopts = NULL;
-//        av_dict_set(&encopts, "aac_at_mode", "vbr", 0);
-//        av_dict_set(&encopts, "aac_at_quality", "2", 0);
-        av_dict_set(&encopts, "vbr", "on", 0);
-        av_dict_set(&encopts, "application", "voip", 0);
-        av_dict_set_int(&encopts, "frame_duration", 20, 0);
-        av_dict_set_int(&encopts, "packet_loss", 0, 0);
-        if (avcodec_open2(m_outEncCtx, enc, &encopts) < 0)
+        if (avcodec_open2(m_outEncCtx, enc, nullptr) < 0)
             return false;
-        av_dict_free(&encopts);
     }
 
     AVStream *st = avformat_new_stream(m_outFmtCtx, nullptr);
@@ -261,9 +245,7 @@ bool AudioThread::resampleAndStore(const AVFrame *decoded) {
 bool AudioThread::encodeAndWrite() {
     // prepare frame -------------------------------------------------------
     if(av_audio_fifo_size(m_fifo) != 0) {
-        int frame_size = FFMIN(av_audio_fifo_size(m_fifo),
-                               m_outEncCtx->frame_size);
-        qCDebug(lcAudioThread)  << "FRAME SIZE: "<< m_outEncCtx->frame_size;
+        int frame_size = FFMIN(av_audio_fifo_size(m_fifo), frameSamples());
         m_output_frame->nb_samples = frame_size;
         av_channel_layout_copy(&m_output_frame->ch_layout, &m_outEncCtx->ch_layout);
         m_output_frame->format = m_outEncCtx->sample_fmt;
@@ -292,6 +274,11 @@ bool AudioThread::encodeAndWrite() {
     av_interleaved_write_frame(m_outFmtCtx, nullptr);
     avio_flush(m_outFmtCtx->pb);
     return true;
+}
+
+
+int AudioThread::frameSamples() const {
+    return m_outEncCtx->frame_size > 0 ? m_outEncCtx->frame_size : EncPreset::kPcmFrameSamples;
 }
 
 
