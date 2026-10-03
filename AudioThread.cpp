@@ -83,9 +83,18 @@ void AudioThread::run() {
                 lock.unlock();
                 // The output is streamed and not seekable, so the WAV header's size
                 // fields are left as 0xFFFFFFFF (the usual "unknown length" marker).
-                avformat_write_header(m_outFmtCtx, nullptr);
-                m_state = State::Recording;
-                emit recordingStarted();
+                if (const int ret = avformat_write_header(m_outFmtCtx, nullptr); ret < 0) {
+                    char err[AV_ERROR_MAX_STRING_SIZE] = {0};
+                    av_strerror(ret, err, sizeof(err));
+                    qCWarning(lcAudioThread) << "avformat_write_header failed:" << err;
+                    // Finish the buffer so the uploader isn't left waiting on it.
+                    tearDownOutput();
+                    emit errorHappened(QStringLiteral("Could not start recording: %1").arg(QLatin1String(err)));
+                    emit recordingStopped();
+                } else {
+                    m_state = State::Recording;
+                    emit recordingStarted();
+                }
             }
         }
         if (m_stopRequested.exchange(false) && m_state == State::Recording) {
@@ -199,11 +208,19 @@ void AudioThread::flushAndTearDownOutput() {
     avio_flush(m_outFmtCtx->pb);
     av_write_trailer(m_outFmtCtx);
     qCDebug(lcAudioThread) << "AudioThread::flushAndTearDownOutput()3";
+    tearDownOutput();
+}
+
+// Marks the current buffer finished and frees the output side, without flushing.
+void AudioThread::tearDownOutput() {
+    if (!m_outFmtCtx) return;
     {
         QMutexLocker lock(&m_bufMutex);
         m_buffers.last().finished = true;
+        m_bufCond.notify_all();
     }
 
+    avcodec_free_context(&m_outEncCtx);
     avio_context_free(&m_avioCtx);
     avformat_free_context(m_outFmtCtx);
     m_outFmtCtx = nullptr;
@@ -292,6 +309,7 @@ int AudioThread::handleWrite(const uint8_t *buf, int size) {
 //    m_buffer.insert(m_buffer.end(), buf, buf + size);
     auto &dest = m_buffers.last().data;
     dest.append(reinterpret_cast<const char *>(buf), size);
+    m_bufCond.notify_all();
     lock.unlock();
     emit dataReady();
     return size;

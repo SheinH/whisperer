@@ -25,10 +25,10 @@ namespace {
             g_curlInitialized = false;
         }
     }
+
     inline qint64 getTimeout(int attempt,
-                                            qint64 baseMs      = 6000,
-                                            double factor      = 1.5)
-    {
+                             qint64 baseMs = 6000,
+                             double factor = 1.5) {
         // 1) compute exponential
         double expTime = baseMs * std::pow(factor, attempt);
 
@@ -36,8 +36,8 @@ namespace {
     }
 }
 
-StreamingAudioUploader::StreamingAudioUploader(AudioThread *audioThread, QObject *parent) :
-        m_audioThread(audioThread), QThread(parent) {
+StreamingAudioUploader::StreamingAudioUploader(AudioThread *audioThread, QObject *parent) : m_audioThread(audioThread),
+    QThread(parent) {
     m_requestTimer.invalidate();
     {
         QMutexLocker locker(&g_curlInitMutex);
@@ -64,32 +64,31 @@ StreamingAudioUploader::StreamingAudioUploader(AudioThread *audioThread, QObject
 
 // Azure fast transcription returns {"combinedPhrases":[{"text":"..."}], "phrases":[...], ...};
 // the combined phrases hold the full transcript.
-QByteArray extractTextField(const QByteArray &jsonData)
-{
+QByteArray extractTextField(const QByteArray &jsonData) {
     const QJsonArray combined = QJsonDocument::fromJson(jsonData).object().value("combinedPhrases").toArray();
     QStringList texts;
-    for (const QJsonValue &phrase : combined)
+    for (const QJsonValue &phrase: combined)
         texts << phrase.toObject().value("text").toString();
     return texts.join(' ').toUtf8();
 }
 
 void StreamingAudioUploader::run() {
-    for(;;) {
+    for (;;) {
         {
             QMutexLocker locker(&m_audioThread->m_bufMutex);
             while (m_audioThread->m_buffers.isEmpty() && !isInterruptionRequested()) {
-                m_audioThread->m_bufCond.wait(&m_audioThread->m_bufMutex,500);
+                m_audioThread->m_bufCond.wait(&m_audioThread->m_bufMutex, 500);
             }
         }
+        if (isInterruptionRequested()) break;
         CURLcode res = curl_easy_perform(m_curl);
         qDebug() << res;
         if (res == CURLE_OK) {
             // if (!m_responseBuffer.isEmpty() && m_responseBuffer[0] == ' ')
-                    emit(finished(extractTextField(m_responseBuffer)));
+            emit(finished(extractTextField(m_responseBuffer)));
             // else
             //         emit(finished(m_responseBuffer));
-        }
-        else {
+        } else {
             qDebug() << "curl_easy_perform failed:" << curl_easy_strerror(res);
             if (res == CURLE_ABORTED_BY_CALLBACK && m_timeoutFlag) {
                 if (timeout_ctr > 3) {
@@ -100,11 +99,10 @@ void StreamingAudioUploader::run() {
                     cleanupForRetry();
                     continue;
                 }
-            }
-            else if (res == CURLE_HTTP_RETURNED_ERROR){
+            } else if (res == CURLE_HTTP_RETURNED_ERROR) {
                 QApplication::beep();
                 long http_code = 0;
-                curl_easy_getinfo (m_curl, CURLINFO_RESPONSE_CODE, &http_code);
+                curl_easy_getinfo(m_curl, CURLINFO_RESPONSE_CODE, &http_code);
                 qDebug() << "HTTP error:" << http_code;;
 
                 qDebug() << QString(m_responseBuffer);
@@ -115,21 +113,28 @@ void StreamingAudioUploader::run() {
         if (isInterruptionRequested()) break;
     }
 }
+
 void StreamingAudioUploader::onAudioError(const QString &error) {
 }
+
 void StreamingAudioUploader::onDataReady() {
     shouldContinue = true;
 }
+
 void StreamingAudioUploader::onAudioFinished() {
     m_requestTimer.start();
 }
+
 int StreamingAudioUploader::progressCallback(void *clientp,
                                              curl_off_t /*dltotal*/,
                                              curl_off_t /*dlnow*/,
                                              curl_off_t ultotal,
                                              curl_off_t ulnow) {
     auto *self = static_cast<StreamingAudioUploader *>(clientp);
-    if(self->shouldContinue) {
+    // Abort an in-flight request on shutdown.
+    if (self->isInterruptionRequested())
+        return 1;
+    if (self->shouldContinue) {
         curl_easy_pause(self->m_curl, CURLPAUSE_CONT);
         self->shouldContinue = false;
     }
@@ -144,6 +149,8 @@ int StreamingAudioUploader::progressCallback(void *clientp,
 
 
 StreamingAudioUploader::~StreamingAudioUploader() {
+    requestInterruption();
+    wait();
     if (m_mime)
         curl_mime_free(m_mime);
     curl_easy_cleanup(m_curl);
@@ -167,7 +174,7 @@ void StreamingAudioUploader::setupRequest() {
     curl_mime_filename(part, "audio.wav");
     curl_mime_type(part, "audio/wav");
     curl_mime_data_cb(part,
-            /* length */ -1,
+                      /* length */ -1,
                       &StreamingAudioUploader::fileReadCallback,
                       &StreamingAudioUploader::seekFunc, nullptr,
                       this);
@@ -193,6 +200,7 @@ void StreamingAudioUploader::setOpts() {
     curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, m_headers);
     curl_easy_setopt(m_curl, CURLOPT_FAILONERROR, 1L);
 }
+
 void StreamingAudioUploader::cleanupRequest() {
     {
         QMutexLocker locker(&m_audioThread->m_bufMutex);
@@ -202,13 +210,14 @@ void StreamingAudioUploader::cleanupRequest() {
             newFileFlag = true;
         }
     }
-//    curl_mime_free(m_mime);
-//    m_mime = nullptr;
+    //    curl_mime_free(m_mime);
+    //    m_mime = nullptr;
     timeout_ctr = 0;
     m_responseBuffer.clear();
     m_requestTimer.invalidate();
     m_timeoutFlag = false;
 }
+
 void StreamingAudioUploader::cleanupForRetry() {
     qDebug() << "Retrying!";
     {
@@ -217,8 +226,8 @@ void StreamingAudioUploader::cleanupForRetry() {
             m_audioThread->m_buffers.front().readPos = 0;
         }
     }
-//    curl_mime_free(m_mime);
-//    m_mime = nullptr;
+    //    curl_mime_free(m_mime);
+    //    m_mime = nullptr;
     m_responseBuffer.clear();
     m_requestTimer.start();
     m_timeoutFlag = false;
@@ -249,34 +258,40 @@ size_t StreamingAudioUploader::fileReadCallback(char *ptr,
         return CURL_READFUNC_ABORT;
     }
 
+
     size_t total = size * nmemb, bytesRead = 0;
     QMutexLocker locker(&self->m_audioThread->m_bufMutex);
-    if (!self->m_audioThread->m_buffers.isEmpty()) {
-        auto &firstBuffer = self->m_audioThread->m_buffers.first();
-        bytesRead = qMin(total, firstBuffer.size());
-        memcpy(ptr, firstBuffer.data.data() + firstBuffer.readPos, bytesRead);
-        firstBuffer.readPos += bytesRead;
-        if (firstBuffer.finished && firstBuffer.size() == 0) {
-            const QByteArray dataCopy = firstBuffer.data;
-//            QThreadPool::globalInstance()->start( [dataCopy] {
-//                QFile file(QStringLiteral("/Users/meow/development/Qt/whisperer/audio.opus"));
-//                if (file.open(QIODevice::WriteOnly)) {
-//                    file.write(dataCopy);
-//                    file.close();
-//                } else {
-//                    qWarning() << "Failed to open opus file for writing:" << file.errorString();
-//                }
-//            });
-            qDebug() << "eof";
-            return 0;
+    for (;;) {
+        if (self->isInterruptionRequested()) {
+            return CURL_READFUNC_ABORT;
         }
-    }
+        if (!self->m_audioThread->m_buffers.isEmpty()) {
+            auto &firstBuffer = self->m_audioThread->m_buffers.first();
+            if (firstBuffer.finished && firstBuffer.size() == 0) {
+                // const QByteArray dataCopy = firstBuffer.data;
+                //            QThreadPool::globalInstance()->start( [dataCopy] {
+                //                QFile file(QStringLiteral("/Users/meow/development/Qt/whisperer/audio.opus"));
+                //                if (file.open(QIODevice::WriteOnly)) {
+                //                    file.write(dataCopy);
+                //                    file.close();
+                //                } else {
+                //                    qWarning() << "Failed to open opus file for writing:" << file.errorString();
+                //                }
+                //            });
+                qDebug() << "eof";
+                return 0;
+            }
+            bytesRead = qMin(total, firstBuffer.size());
+            memcpy(ptr, firstBuffer.data.data() + firstBuffer.readPos, bytesRead);
+            firstBuffer.readPos += bytesRead;
+        }
 
-    if (bytesRead > 0) {
-        self->newFileFlag = false;
-        return static_cast<size_t>(bytesRead);
+        if (bytesRead > 0) {
+            self->newFileFlag = false;
+            return bytesRead;
+        }
+        self->m_audioThread->m_bufCond.wait(&self->m_audioThread->m_bufMutex, 100);
     }
-    return CURL_READFUNC_PAUSE;
 }
 
 int StreamingAudioUploader::seekFunc(void *arg, curl_off_t offset, int origin) {

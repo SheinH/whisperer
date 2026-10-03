@@ -36,13 +36,18 @@ MainWindow::MainWindow(QWidget *parent)
 
 // Destructor
 MainWindow::~MainWindow() {
-    if (streamingAudioUploader.isRunning()) {
+    qDebug() << "MainWindow shutting down: stopping worker threads...";
+    // Both threads must have left run() before their QThread members are destroyed.
+    {
+        QMutexLocker lock(&keystrokesThread.queueMutex);
         keystrokesThread.shutdownRequested = true;
-        qDebug() << "MainWindow shutting down: stopping uploader thread...";
-        streamingAudioUploader.requestInterruption();
-        streamingAudioUploader.quit();
-        streamingAudioUploader.wait(3000);
+        keystrokesThread.waitCondition.notify_all();
     }
+    keystrokesThread.wait();
+
+    streamingAudioUploader.requestInterruption();
+    audioThread.m_bufCond.notify_all();
+    streamingAudioUploader.wait();
 }
 
 // User pressed the “start” hot‑key

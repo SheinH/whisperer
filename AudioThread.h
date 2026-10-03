@@ -91,6 +91,7 @@ private:
     // helpers --------------------------------------------------------------
     bool        setupOutput();
     void        flushAndTearDownOutput();
+    void        tearDownOutput();
     static int  writeCallback(void *opaque,const uint8_t *buf,int size);
     int         handleWrite(const uint8_t *buf,int size);
     bool        resampleAndStore(const AVFrame *decoded);
