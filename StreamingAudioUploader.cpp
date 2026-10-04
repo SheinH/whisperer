@@ -84,6 +84,15 @@ void StreamingAudioUploader::run() {
         CURLcode res = curl_easy_perform(m_curl);
         qDebug() << res;
         if (res == CURLE_OK) {
+            const qint64 doneNs = monotonicNs();
+            const qint64 stopNs = m_audioThread->m_stopRequestedNs;
+            const qint64 noticedNs = m_audioThread->m_stopNoticedNs;
+            const auto ms = [](qint64 from, qint64 to) { return double(to - from) / 1e6; };
+            qDebug().nospace() << "Latency (ms): stop->noticed " << ms(stopNs, noticedNs)
+                               << ", noticed->eof " << ms(noticedNs, m_eofNs)
+                               << ", eof->first byte " << ms(m_eofNs, m_firstByteNs)
+                               << ", first byte->done " << ms(m_firstByteNs, doneNs)
+                               << ", total " << ms(stopNs, doneNs);
             // if (!m_responseBuffer.isEmpty() && m_responseBuffer[0] == ' ')
             emit(finished(extractTextField(m_responseBuffer)));
             // else
@@ -241,6 +250,8 @@ size_t StreamingAudioUploader::writeCallback(void *contents,
     auto *self = static_cast<StreamingAudioUploader *>(userdata);
     size_t total = size * nmemb;
     if (self) {
+        if (self->m_responseBuffer.isEmpty())
+            self->m_firstByteNs = monotonicNs();
         self->m_responseBuffer.append(static_cast<const char *>(contents), int(total));
     }
     return total;
@@ -279,6 +290,7 @@ size_t StreamingAudioUploader::fileReadCallback(char *ptr,
                 //                }
                 //            });
                 qDebug() << "eof";
+                self->m_eofNs = monotonicNs();
                 return 0;
             }
             bytesRead = qMin(total, firstBuffer.size());

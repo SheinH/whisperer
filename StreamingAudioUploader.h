@@ -53,6 +53,9 @@ private:
     bool m_timeoutFlag = false;
     uint8_t timeout_ctr = 0;
     QElapsedTimer m_requestTimer;
+    // latency logging (uploader thread only)
+    qint64 m_eofNs = 0;
+    qint64 m_firstByteNs = 0;
     CURL *m_curl;
     AudioThread *m_audioThread;
     curl_mime *m_mime = nullptr;

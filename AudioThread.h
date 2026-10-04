@@ -6,6 +6,7 @@
 #include <QMutex>
 #include <QLoggingCategory>
 #include <atomic>
+#include <chrono>
 #include <QtCore/qqueue.h>
 
 extern "C" {
@@ -56,6 +57,12 @@ struct RecordingBuffer {
     }
 };
 
+// Monotonic clock in nanoseconds, shared by the threads for latency logging.
+inline qint64 monotonicNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 class AudioThread final : public QThread
 {
 Q_OBJECT
@@ -76,6 +83,11 @@ public:
     QMutex              m_bufMutex;
     QWaitCondition     m_bufCond;
     QQueue<RecordingBuffer> m_buffers;
+    QWaitCondition audioInput;
+
+    // latency logging: when stop was requested (UI thread) and when run() saw it
+    std::atomic<qint64> m_stopRequestedNs{0};
+    std::atomic<qint64> m_stopNoticedNs{0};
 
 signals:
     void initialized(bool ok);
@@ -105,6 +117,10 @@ private:
     std::atomic_bool    m_abort{false};
     std::atomic_bool    m_startRequested{false};
     std::atomic_bool    m_stopRequested{false};
+    // guards setting the flags above so run() can sleep on m_ctrlCond without missing a wake
+    QMutex              m_ctrlMutex;
+    QWaitCondition      m_ctrlCond;
+    
 
     // FFmpeg (input) -------------------------------------------------------
     AVFormatContext    *m_inFmtCtx {nullptr};

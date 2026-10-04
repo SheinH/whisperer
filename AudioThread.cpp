@@ -15,7 +15,12 @@ AudioThread::AudioThread(QObject *parent) : QThread(parent) {
 }
 
 AudioThread::~AudioThread() {
-    m_abort = true;
+    {
+        // Released before wait(): run() needs the mutex to exit.
+        QMutexLocker lock(&m_ctrlMutex);
+        m_abort = true;
+        m_ctrlCond.wakeOne();
+    }
     wait();                 // stop thread
 
     closeInput();
@@ -66,9 +71,18 @@ void AudioThread::closeInput() {
     m_inStream = -1;
 }
 
-void AudioThread::startRecording() { m_startRequested = true; }
+void AudioThread::startRecording() {
+    QMutexLocker lock(&m_ctrlMutex);
+    m_startRequested = true;
+    m_ctrlCond.wakeOne();
+}
 
-void AudioThread::stopRecording() { m_stopRequested = true; }
+void AudioThread::stopRecording() {
+    m_stopRequestedNs = monotonicNs();
+    QMutexLocker lock(&m_ctrlMutex);
+    m_stopRequested = true;
+    m_ctrlCond.wakeOne();
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -98,6 +112,7 @@ void AudioThread::run() {
             }
         }
         if (m_stopRequested.exchange(false) && m_state == State::Recording) {
+            m_stopNoticedNs = monotonicNs();
             flushAndTearDownOutput();
             m_state = State::Idle;
             emit recordingStopped();
@@ -111,7 +126,10 @@ void AudioThread::run() {
 
         // read one packet --------------------------------------------------
         if (av_read_frame(m_inFmtCtx, m_pkt) < 0) {
-            msleep(8);
+            // No packet yet: sleep, but let a start/stop/abort request cut it short.
+            QMutexLocker lock(&m_ctrlMutex);
+            if (!m_startRequested && !m_stopRequested && !m_abort)
+                m_ctrlCond.wait(&m_ctrlMutex, 8);
             continue;
         }
         if (m_pkt->stream_index != m_inStream || m_state == State::Idle) {
