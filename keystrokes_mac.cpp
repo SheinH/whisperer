@@ -2,8 +2,7 @@
 #include <Carbon/Carbon.h>
 #include <QString>
 #include <QDebug>
-#include <QThread>
-#include "macos_integrations.h"
+#include "keystrokes.h"
 
 
 void typeAChar(QChar c, CGEventSourceRef& source) {
@@ -69,30 +68,4 @@ void typeString(const QByteArray &text, bool shouldHitEnter, bool shouldBeAction
 
     // Release the event source
     CFRelease(source);
-}
-
-void KeystrokesThread::run()
-{
-    for (;;) {
-
-        {
-            QMutexLocker locker(&queueMutex);
-
-            if (shutdownRequested)
-                break;
-
-            while (pendingStrings.isEmpty() && !shutdownRequested) {
-                waitCondition.wait(&queueMutex,500);
-            }
-
-            if (shutdownRequested)
-                break;
-
-            typeString(pendingStrings.first(),shouldHitEnter,shouldBeAction);
-            shouldBeAction = false;
-            shouldHitEnter = false;
-            pendingStrings.takeFirst();
-        }
-    }
-
 }

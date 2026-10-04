@@ -34,9 +34,22 @@ find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network WebSockets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network WebSockets)
 find_package(QHotkey CONFIG REQUIRED)
 find_package(CURL REQUIRED)
-find_library(CORE_GRAPHICS_LIBRARY CoreGraphics)
-find_library(CORE_FOUNDATION_LIBRARY CoreFoundation)
-find_library(APPLICATION_SERVICES_LIBRARY ApplicationServices)
+if (APPLE)
+    find_library(CORE_GRAPHICS_LIBRARY CoreGraphics)
+    find_library(CORE_FOUNDATION_LIBRARY CoreFoundation)
+    find_library(APPLICATION_SERVICES_LIBRARY ApplicationServices)
+    set(PLATFORM_SOURCES keystrokes_mac.cpp)
+    set(PLATFORM_LIBRARIES
+            ${CORE_GRAPHICS_LIBRARY}
+            ${CORE_FOUNDATION_LIBRARY}
+            ${APPLICATION_SERVICES_LIBRARY}
+    )
+elseif (WIN32)
+    set(PLATFORM_SOURCES keystrokes_win.cpp)
+    set(PLATFORM_LIBRARIES user32)
+else ()
+    message(FATAL_ERROR "No keystroke implementation for this platform")
+endif ()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
         libavcodec
@@ -58,12 +71,13 @@ set(PROJECT_SOURCES
         audiorecorder.cpp
         transcriptionapi.h
         transcriptionapi.cpp
-        macos_integrations.cpp
-        macos_integrations.h
+        keystrokes.cpp
+        keystrokes.h
         StreamingAudioUploader.cpp
         StreamingAudioUploader.h
         AudioThread.cpp
         AudioThread.h
+        ${PLATFORM_SOURCES}
 )
 
 if (${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -93,9 +107,7 @@ target_link_libraries(whisperer PRIVATE
         Qt${QT_VERSION_MAJOR}::Widgets
         Qt${QT_VERSION_MAJOR}::Network
         Qt${QT_VERSION_MAJOR}::WebSockets
-        ${CORE_GRAPHICS_LIBRARY}
-        ${CORE_FOUNDATION_LIBRARY}
-        ${APPLICATION_SERVICES_LIBRARY}
+        ${PLATFORM_LIBRARIES}
         qhotkey
         PRIVATE PkgConfig::FFMPEG
         CURL::libcurl

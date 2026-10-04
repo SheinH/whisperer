@@ -7,7 +7,7 @@
 #include "audiorecorder.h"
 #include "StreamingAudioUploader.h"
 #include "AudioThread.h"
-#include "macos_integrations.h"
+#include "keystrokes.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {

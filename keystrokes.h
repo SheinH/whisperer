@@ -2,8 +2,9 @@
 // Created by meow on 8/9/24.
 //
 
-#ifndef WHISPERER_MACOS_INTEGRATIONS_H
-#define WHISPERER_MACOS_INTEGRATIONS_H
+#ifndef WHISPERER_KEYSTROKES_H
+#define WHISPERER_KEYSTROKES_H
+#include <QThread>
 #include <QWaitCondition>
 #include <QMutex>
 #include <QQueue>
@@ -19,7 +20,9 @@ public:
 protected:
     void run() override;
 };
-void typeString(const QString& text, bool shouldHitEnter, bool shouldBeAction);
+// Types text at the cursor of the focused window. Implemented per platform
+// in keystrokes_mac.cpp / keystrokes_win.cpp.
+void typeString(const QByteArray &text, bool shouldHitEnter, bool shouldBeAction);
 
 
-#endif //WHISPERER_MACOS_INTEGRATIONS_H
+#endif //WHISPERER_KEYSTROKES_H
